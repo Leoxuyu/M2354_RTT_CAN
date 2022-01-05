@@ -369,15 +369,15 @@ void pincfg_init_slcd(void)
 
 void nutool_pincfg_init_can0(void)
 {
-    SYS->GPA_MFPL &= ~(SYS_GPA_MFPL_PA5MFP_Msk | SYS_GPA_MFPL_PA4MFP_Msk);
-    SYS->GPA_MFPL |= (SYS_GPA_MFPL_PA5MFP_CAN0_TXD | SYS_GPA_MFPL_PA4MFP_CAN0_RXD);
+    SYS->GPB_MFPH &= ~(SYS_GPB_MFPH_PB11MFP_Msk | SYS_GPB_MFPH_PB10MFP_Msk);
+    SYS->GPB_MFPH |= (SYS_GPB_MFPH_PB10MFP_CAN0_RXD | SYS_GPB_MFPH_PB11MFP_CAN0_TXD);
 
     return;
 }
 
 void nutool_pincfg_deinit_can0(void)
 {
-    SYS->GPA_MFPL &= ~(SYS_GPA_MFPL_PA5MFP_Msk | SYS_GPA_MFPL_PA4MFP_Msk);
+    SYS->GPB_MFPH &= ~(SYS_GPB_MFPH_PB11MFP_Msk | SYS_GPB_MFPH_PB10MFP_Msk);
 
     return;
 }
@@ -385,7 +385,7 @@ void nutool_pincfg_deinit_can0(void)
 void nutool_pincfg_init(void)
 {
     nutool_pincfg_init_can0();
-    nutool_pincfg_init_eadc0();
+    //nutool_pincfg_init_eadc0();
     nutool_pincfg_init_epwm0();
     nutool_pincfg_init_epwm1();
     nutool_pincfg_init_i2c1();
@@ -406,7 +406,7 @@ void nutool_pincfg_init(void)
 void nutool_pincfg_deinit(void)
 {
     nutool_pincfg_deinit_can0();
-    nutool_pincfg_deinit_eadc0();
+    //nutool_pincfg_deinit_eadc0();
     nutool_pincfg_deinit_epwm0();
     nutool_pincfg_deinit_epwm1();
     nutool_pincfg_deinit_i2c1();

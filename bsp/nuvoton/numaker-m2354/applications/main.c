@@ -219,7 +219,6 @@ int can_sample(int argc, char *argv[])
 	res = rt_device_open(can_dev, RT_DEVICE_FLAG_INT_TX | RT_DEVICE_FLAG_INT_RX);
 	RT_ASSERT(res == RT_EOK);
 
-
 	/* 设置 CAN 通信的波特率为 500kbit/s*/
 	res = rt_device_control(can_dev, RT_CAN_CMD_SET_BAUD, (void *)CAN500kBaud);
 	RT_ASSERT(res == RT_EOK);
@@ -227,17 +226,29 @@ int can_sample(int argc, char *argv[])
 	/* 设置 CAN 的工作模式为正常工作模式 */
 	res = rt_device_control(can_dev, RT_CAN_CMD_SET_MODE, (void *)RT_CAN_MODE_NORMAL);
 	RT_ASSERT(res == RT_EOK);
-	
+
     /* 创建数据接收线程 */
-    thread = rt_thread_create("can_rx", can_rx_thread, RT_NULL, 1024, 25, 10);
+    thread = rt_thread_create("can_rx", can_rx_thread, RT_NULL, 2048, 25, 10);
     if (thread != RT_NULL)
     {
         rt_thread_startup(thread);
+        rt_kprintf("create can_rx thread ok!\n");		
     }
     else
     {
         rt_kprintf("create can_rx thread failed!\n");
     }
+
+    return res;
+}
+/* 导出到 msh 命令列表中 */
+MSH_CMD_EXPORT(can_sample, can device sample);
+
+int can_sendmsg(int argc, char *argv[])
+{
+    struct rt_can_msg msg = {0};
+    rt_err_t res;
+    rt_size_t  size;
 
     msg.id = 0x78;              /* ID 为 0x78 */
     msg.ide = RT_CAN_STDID;     /* 标准格式 */
@@ -266,11 +277,7 @@ int can_sample(int argc, char *argv[])
     return res;
 }
 /* 导出到 msh 命令列表中 */
-MSH_CMD_EXPORT(can_sample, can device sample);
-
-
-
-
+MSH_CMD_EXPORT(can_sendmsg, can device send);
 
 
 
