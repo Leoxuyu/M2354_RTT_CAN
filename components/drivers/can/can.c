@@ -778,9 +778,6 @@ void rt_hw_can_isr(struct rt_can_device *can, int event)
         rt_uint32_t no;
 
         rx_fifo = (struct rt_can_rx_fifo *)can->can_rx;
-		
-
-		
         RT_ASSERT(rx_fifo != RT_NULL);
         /* interrupt mode receive */
         RT_ASSERT(can->parent.open_flag & RT_DEVICE_FLAG_INT_RX);
@@ -888,10 +885,6 @@ void rt_hw_can_isr(struct rt_can_device *can, int event)
     {
         struct rt_can_tx_fifo *tx_fifo;
         rt_uint32_t no;
-		struct rt_can_sndbxinx_list *tx_tosnd = RT_NULL;
-		tx_tosnd = rt_list_entry(tx_fifo->freelist.next, struct rt_can_sndbxinx_list, list);
-        rt_completion_done(&(tx_tosnd->completion));
-
         no = event >> 8;
         tx_fifo = (struct rt_can_tx_fifo *) can->can_tx;
         RT_ASSERT(tx_fifo != RT_NULL);

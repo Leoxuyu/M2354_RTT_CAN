@@ -53,6 +53,7 @@ struct nu_can
     CAN_T *can_base;
     uint32_t can_rst;
     IRQn_Type can_irq_n;
+    uint32_t int_flag;
 };
 typedef struct nu_can *nu_can_t;
 
@@ -108,10 +109,9 @@ void CAN0_IRQHandler(void)
 
 static void nu_can_isr(nu_can_t can)
 {
-	struct rt_can_sndbxinx_list *tx_tosnd = RT_NULL;	
     uint32_t u32IIDRstatus;
     /* Get base address of CAN register */
-    CAN_T *can_base = ((nu_can_t)can)->can_base;
+    CAN_T *can_base = can->can_base;
 
     /* Get interrupt event */
     u32IIDRstatus = CAN_GET_INT_PENDING_STATUS(can_base);
@@ -127,7 +127,6 @@ static void nu_can_isr(nu_can_t can)
 #ifndef RT_CAN_USING_HDR
             /* Using as Lisen,Loopback,Loopback+Lisen mode*/
             rt_hw_can_isr(&can->dev, RT_CAN_EVENT_TX_DONE);
-			rt_completion_done(&(tx_tosnd->completion));
 #endif
             //rt_kprintf("[%s]TX OK INT\n", can->name) ;
         }
@@ -147,12 +146,12 @@ static void nu_can_isr(nu_can_t can)
         /**************************/
         if (can_base->STATUS & CAN_STATUS_EWARN_Msk)
         {
-            rt_kprintf("[%s]EWARN INT\n", can->name) ;
+            //rt_kprintf("[%s]EWARN INT\n", can->name) ;
         }
 
         if (can_base->STATUS & CAN_STATUS_BOFF_Msk)
         {
-            rt_kprintf("[%s]BUSOFF INT\n", can->name) ;
+            //rt_kprintf("[%s]BUSOFF INT\n", can->name) ;
 
             /* Do Init to release busoff pin */
             can_base->CON = (CAN_CON_INIT_Msk | CAN_CON_CCE_Msk);
@@ -181,49 +180,88 @@ static void nu_can_isr(nu_can_t can)
 
 }
 
+static void nu_can_set_int(nu_can_t psCAN)
+{
+    /* Get base address of CAN register */
+    CAN_T *can_base = psCAN->can_base;
+
+    if (psCAN->int_flag & (RT_DEVICE_FLAG_INT_RX | RT_DEVICE_FLAG_INT_TX))
+    {
+        /* Enable Status Change Interrupt */
+        CAN_EnableInt(can_base, CAN_CON_SIE_Msk);
+    }
+    else
+    {
+        /* Disable Status Change Interrupt  */
+        CAN_DisableInt(can_base, CAN_CON_SIE_Msk);
+    }
+
+    if (psCAN->int_flag & RT_DEVICE_CAN_INT_ERR)
+    {
+        /* Enable Error Interrupt */
+        CAN_EnableInt(can_base, CAN_CON_EIE_Msk);
+    }
+    else
+    {
+        /* Enable Error Interrupt */
+        CAN_DisableInt(can_base, CAN_CON_EIE_Msk);
+    }
+
+    if (CAN_GetConIE(can_base) & (CAN_CON_SIE_Msk | CAN_CON_EIE_Msk))
+    {
+        CAN_EnableInt(can_base, CAN_CON_IE_Msk);
+
+        /* Enable NVIC interrupt. */
+        NVIC_EnableIRQ(psCAN->can_irq_n);
+    }
+    else
+    {
+        CAN_DisableInt(can_base, CAN_CON_IE_Msk);
+
+        /* Disable NVIC interrupt. */
+        NVIC_DisableIRQ(psCAN->can_irq_n);
+    }
+}
 
 static rt_err_t nu_can_configure(struct rt_can_device *can, struct can_configure *cfg)
 {
+    uint32_t u32CANMode;
+    nu_can_t psCAN = (nu_can_t)can;
 
     RT_ASSERT(can != RT_NULL);
     RT_ASSERT(cfg != RT_NULL);
 
     /* Get base address of CAN register */
-    CAN_T *can_base = ((nu_can_t)can)->can_base;
+    CAN_T *can_base = psCAN->can_base;
 
     RT_ASSERT(can_base != RT_NULL);
 
-    /* Reset this module */
-    SYS_ResetModule(((nu_can_t)can)->can_rst);
-
     switch (cfg->mode)
     {
-    /* CAN default Normal mode */
     case RT_CAN_MODE_NORMAL:
-        can->config.mode = CAN_NORMAL_MODE;
+        u32CANMode = CAN_NORMAL_MODE;
         break;
+
     case RT_CAN_MODE_LISEN:
-        can->config.mode = RT_CAN_MODE_LISEN;
-        break;
     case RT_CAN_MODE_LOOPBACK:
-        can->config.mode = RT_CAN_MODE_LOOPBACK;
-        break;
     case RT_CAN_MODE_LOOPBACKANLISEN:
-        can->config.mode = RT_CAN_MODE_LOOPBACKANLISEN;
+        u32CANMode = CAN_BASIC_MODE;
         break;
+
     default:
-        rt_kprintf("Unsupported Operating mode");
+        rt_kprintf("Unsupported mode");
         goto exit_nu_can_configure;
     }
 
-    /*Set the CAN Bit Rate and Operating mode*/
-    if (CAN_Open(can_base, can->config.baud_rate, can->config.mode) < 1)
-        return -(RT_ERROR);
+    /* Reset this module */
+    SYS_ResetModule(psCAN->can_rst);
 
+    /*Set the CAN Bit Rate and Operating mode*/
+    if (CAN_Open(can_base, cfg->baud_rate, u32CANMode) != cfg->baud_rate)
+        goto exit_nu_can_configure;
 
     switch (cfg->mode)
     {
-    /* CAN default Normal mode */
     case RT_CAN_MODE_NORMAL:
 #ifdef RT_CAN_USING_HDR
         CAN_LeaveTestMode(can_base);
@@ -231,19 +269,24 @@ static rt_err_t nu_can_configure(struct rt_can_device *can, struct can_configure
         CAN_EnterTestMode(can_base, CAN_TEST_BASIC_Msk);
 #endif
         break;
+
     case RT_CAN_MODE_LISEN:
         CAN_EnterTestMode(can_base, CAN_TEST_BASIC_Msk | CAN_TEST_SILENT_Msk);
         break;
+
     case RT_CAN_MODE_LOOPBACK:
         CAN_EnterTestMode(can_base, CAN_TEST_BASIC_Msk | CAN_TEST_LBACK_Msk);
         break;
+
     case RT_CAN_MODE_LOOPBACKANLISEN:
         CAN_EnterTestMode(can_base, CAN_TEST_BASIC_Msk | CAN_TEST_SILENT_Msk | CAN_TEST_LBACK_Msk);
         break;
+
     default:
-        rt_kprintf("Unsupported Operating mode");
         goto exit_nu_can_configure;
     }
+
+    nu_can_set_int(psCAN);
 
     return RT_EOK;
 
@@ -256,59 +299,29 @@ exit_nu_can_configure:
 
 static rt_err_t nu_can_control(struct rt_can_device *can, int cmd, void *arg)
 {
-    rt_uint32_t argval;
+    rt_uint32_t argval = (rt_uint32_t) arg;
+    nu_can_t psCAN = (nu_can_t)can;
+
+    CAN_T *can_base;
 
 #ifdef RT_CAN_USING_HDR
     struct rt_can_filter_config *filter_cfg;
 #endif
-    /* Get base address of CAN register */
-    CAN_T *can_base = ((nu_can_t)can)->can_base;
+    RT_ASSERT(can);
 
-    RT_ASSERT(can_base != RT_NULL);
-    /* Check baud rate */
-    RT_ASSERT(can->config.baud_rate != 0);
+    /* Get base address of CAN register */
+    can_base = psCAN->can_base;
 
     switch (cmd)
     {
-    case RT_DEVICE_CTRL_CLR_INT:
-        argval = (rt_uint32_t) arg;
-        if ((argval == RT_DEVICE_FLAG_INT_RX) || (argval == RT_DEVICE_FLAG_INT_TX))
-        {
-            /* Disable NVIC interrupt. */
-            NVIC_DisableIRQ(((nu_can_t)can)->can_irq_n);
-            /* Disable Status Change Interrupt  */
-            CAN_DisableInt(can_base, CAN_CON_IE_Msk | CAN_CON_SIE_Msk);
-
-        }
-        else if (argval == RT_DEVICE_CAN_INT_ERR)
-        {
-            /* Disable NVIC interrupt. */
-            NVIC_DisableIRQ(((nu_can_t)can)->can_irq_n);
-            /* Disable Error Interrupt */
-            CAN_DisableInt(can_base, CAN_CON_EIE_Msk);
-        }
+    case RT_DEVICE_CTRL_SET_INT:
+        psCAN->int_flag |= argval;
+        nu_can_set_int(psCAN);
         break;
 
-    case RT_DEVICE_CTRL_SET_INT:
-        argval = (rt_uint32_t) arg;
-	
-		// Enable IP clock
-		CLK->APBCLK0 |= CLK_APBCLK0_CAN0CKEN_Msk;
-
-		// Reset CAN0
-		SYS->IPRST1 |= SYS_IPRST1_CAN0RST_Msk;
-		SYS->IPRST1 &= ~SYS_IPRST1_CAN0RST_Msk;
-	
-        if (argval == RT_DEVICE_FLAG_INT_RX || (argval == RT_DEVICE_FLAG_INT_TX))
-        {
-			CAN_EnableInt(CAN0, CAN_CON_IE_Msk | CAN_CON_SIE_Msk );
-        }
-        else if (argval == RT_DEVICE_CAN_INT_ERR)
-        {
-			CAN_EnableInt(CAN0, CAN_CON_IE_Msk | CAN_CON_SIE_Msk | CAN_CON_EIE_Msk);
-        }
-		NVIC_SetPriority(CAN0_IRQn, (1 << __NVIC_PRIO_BITS) - 2);
-		NVIC_EnableIRQ(CAN0_IRQn);
+    case RT_DEVICE_CTRL_CLR_INT:
+        psCAN->int_flag &= argval;
+        nu_can_set_int(psCAN);
         break;
 
 #ifdef RT_CAN_USING_HDR
@@ -340,35 +353,55 @@ static rt_err_t nu_can_control(struct rt_can_device *can, int cmd, void *arg)
 #endif
 
     case RT_CAN_CMD_SET_MODE:
-        argval = (rt_uint32_t) arg;
-        if (argval != RT_CAN_MODE_NORMAL && argval != RT_CAN_MODE_LISEN &&
-                argval != RT_CAN_MODE_LOOPBACK && argval != RT_CAN_MODE_LOOPBACKANLISEN)
+    {
+        switch (argval)
         {
+        case RT_CAN_MODE_NORMAL:
+        case RT_CAN_MODE_LISEN:
+        case RT_CAN_MODE_LOOPBACK:
+        case RT_CAN_MODE_LOOPBACKANLISEN:
+            if (argval != can->config.mode)
+            {
+                can->config.mode = argval;
+                return nu_can_configure(can, &can->config);
+            }
+            break;
+
+        default:
             return -(RT_ERROR);
+            break;
         }
-        if (argval != can->config.mode)
-        {
-            can->config.mode = argval;
-            return nu_can_configure(can, &can->config);
-        }
-        break;
+    }
+    break;
 
     case RT_CAN_CMD_SET_BAUD:
-        argval = (rt_uint32_t) arg;
-        if (argval != CAN1MBaud && argval != CAN800kBaud && argval != CAN500kBaud && argval != CAN250kBaud &&
-                argval != CAN125kBaud && argval != CAN100kBaud && argval != CAN50kBaud  && argval != CAN20kBaud  && argval != CAN10kBaud)
+    {
+        switch (argval)
         {
+        case CAN1MBaud:
+        case CAN800kBaud:
+        case CAN500kBaud:
+        case CAN250kBaud:
+        case CAN125kBaud:
+        case CAN100kBaud:
+        case CAN50kBaud:
+        case CAN20kBaud:
+        case CAN10kBaud:
+            if (argval != can->config.baud_rate)
+            {
+                can->config.baud_rate = argval;
+                return nu_can_configure(can, &can->config);
+            }
+            break;
+
+        default:
             return -(RT_ERROR);
+            break;
         }
-        if (argval != can->config.baud_rate)
-        {
-            can->config.baud_rate = argval;
-            return nu_can_configure(can, &can->config);
-        }
-        break;
+    }
+    break;
 
     case RT_CAN_CMD_SET_PRIV:
-        argval = (rt_uint32_t) arg;
         if (argval != RT_CAN_MODE_PRIV && argval != RT_CAN_MODE_NOPRIV)
         {
             return -(RT_ERROR);
@@ -379,20 +412,27 @@ static rt_err_t nu_can_control(struct rt_can_device *can, int cmd, void *arg)
             return nu_can_configure(can, &can->config);
         }
         break;
+
     case RT_CAN_CMD_GET_STATUS:
     {
-        rt_uint32_t errtype;
-        errtype = can_base->ERR;
+        rt_uint32_t errtype = can_base->ERR;
+
+        RT_ASSERT(arg);
+
         /*Receive Error Counter*/
         can->status.rcverrcnt = (errtype >> 8);
+
         /*Transmit Error Counter*/
-        can->status.snderrcnt = ((errtype >> 24) & 0xFF);
+        can->status.snderrcnt = (errtype & 0xFF);
+
         can->status.lasterrtype = CAN_GET_INT_STATUS(can_base) & 0x8000;
-        /*status error code*/
+
+        /*Status error code*/
         can->status.errcode = CAN_GET_INT_STATUS(can_base) & 0x07;
-        rt_memcpy(arg, &can->status, sizeof(can->status));
+        rt_memcpy(arg, &can->status, sizeof(struct rt_can_status));
     }
     break;
+
     default:
         return -(RT_EINVAL);
 
